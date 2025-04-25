@@ -3,10 +3,9 @@ import { useState, useEffect } from "react";
 import { Ionicons } from "@expo/vector-icons";
 import { useFirestore } from '../../context/storageFirebase';
 import { DocumentData } from 'firebase/firestore';
-import formatDate from '@/timeParse'
+import formatDate from '@/timeParse';
+import { router } from 'expo-router';
 import { useAuth } from "@/context/AuthContext";
-import { useRouter } from 'expo-router';
-
 
 interface OrderItem {
   productName: string;
@@ -23,20 +22,20 @@ interface Order {
   recipientPhone: string;
   shipmentStatus: string;
   totalAmount: number;
+  idShipper: string;
 }
 
-export default function Index() {
+export default function OrderScreen() {
   const { getDocuments, updateDocument } = useFirestore();
+  const { user } = useAuth();
   const [orders, setOrders] = useState<Order[]>([]);
   const [refreshing, setRefreshing] = useState(false);
-  const router = useRouter();
-  const { user } = useAuth();
 
   const fetchOrders = async () => {
     try {
       const docs = await getDocuments('ship');
-      const readyToShipOrders = docs
-        .filter(doc => doc.shipmentStatus === 'ready_to_ship')
+      const shippingOrders = docs
+        .filter(doc => doc.shipmentStatus === 'shipping' && doc.idShipper === user?.uid)
         .map((doc: DocumentData) => ({
           id: doc.id,
           createdAt: doc.createdAt,
@@ -47,18 +46,16 @@ export default function Index() {
           recipientPhone: doc.recipientPhone,
           shipmentStatus: doc.shipmentStatus,
           totalAmount: doc.totalAmount,
+          idShipper: doc.idShipper,
         })) as Order[];
-      setOrders(readyToShipOrders);
+      setOrders(shippingOrders);
     } catch (error) {
       console.error('Error fetching orders:', error);
     }
   };
 
   useEffect(() => {
-    if (!user) {
-      router.replace('/login');
-    }
-    else  fetchOrders();
+    fetchOrders();
   }, []);
 
   const onRefresh = () => {
@@ -66,17 +63,26 @@ export default function Index() {
     fetchOrders().finally(() => setRefreshing(false));
   };
 
-  const handleAcceptOrder = async (orderId: string) => {
+  const handleCompleteDelivery = async (orderId: string) => {
     try {
       await updateDocument('ship', orderId, {
-        shipmentStatus: 'shipping',
-        idShipper: user?.uid
+        shipmentStatus: 'arrived'
       });
       // Refresh danh sách sau khi cập nhật
       fetchOrders();
     } catch (error) {
-      console.error('Error accepting order:', error);
+      console.error('Error completing delivery:', error);
     }
+  };
+
+  const handleViewMap = (order: Order) => {
+    router.push({
+      pathname: "../MapScreen",
+      params: {
+        deliveryAddress: order.deliveryAddress,
+        shipperId: order.idShipper
+      }
+    });
   };
 
   const renderOrderItem = ({ item }: { item: Order }) => (
@@ -91,24 +97,28 @@ export default function Index() {
           <Text style={styles.totalAmount}>{item.totalAmount.toLocaleString()}đ</Text>
         </View>
       </View>
-
+      
       <View style={styles.divider} />
-
+      
       <View style={styles.orderInfo}>
-        <View style={styles.infoRow}>
+        <TouchableOpacity 
+          style={styles.infoRow}
+          onPress={() => handleViewMap(item)}
+        >
           <View style={styles.iconContainer}>
             <Ionicons name="location-outline" size={20} color="#4CAF50" />
           </View>
           <Text style={styles.infoText}>{item.deliveryAddress}</Text>
-        </View>
-
+          <Ionicons name="chevron-forward" size={20} color="#666" />
+        </TouchableOpacity>
+        
         <View style={styles.infoRow}>
           <View style={styles.iconContainer}>
             <Ionicons name="call-outline" size={20} color="#2196F3" />
           </View>
           <Text style={styles.infoText}>{item.recipientPhone}</Text>
         </View>
-
+        
         <View style={styles.itemsList}>
           <View style={styles.iconContainer}>
             <Ionicons name="cart-outline" size={20} color="#FF9800" />
@@ -123,27 +133,27 @@ export default function Index() {
         </View>
       </View>
 
-      <TouchableOpacity
-        style={styles.acceptButton}
-        onPress={() => handleAcceptOrder(item.id)}
+      <TouchableOpacity 
+        style={styles.completeButton}
+        onPress={() => handleCompleteDelivery(item.id)}
       >
-        <Ionicons name="bicycle-outline" size={20} color="#fff" />
-        <Text style={styles.acceptButtonText}>Nhận đơn hàng</Text>
+        <Ionicons name="checkmark-circle-outline" size={20} color="#fff" />
+        <Text style={styles.completeButtonText}>Xác nhận đã giao</Text>
       </TouchableOpacity>
     </View>
   );
 
   return (
     <View style={styles.container}>
-        <FlatList
-          data={orders}
-          renderItem={renderOrderItem}
-          keyExtractor={(item) => item.id}
-          contentContainerStyle={styles.listContainer}
-          refreshControl={
-            <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
-          }
-        />
+      <FlatList
+        data={orders}
+        renderItem={renderOrderItem}
+        keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.listContainer}
+        refreshControl={
+          <RefreshControl refreshing={refreshing} onRefresh={onRefresh} />
+        }
+      />
     </View>
   );
 }
@@ -248,8 +258,8 @@ const styles = StyleSheet.create({
     fontSize: 15,
     lineHeight: 20,
   },
-  acceptButton: {
-    backgroundColor: "#4CAF50",
+  completeButton: {
+    backgroundColor: "#2196F3",
     padding: 14,
     borderRadius: 8,
     alignItems: "center",
@@ -258,7 +268,7 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     gap: 8,
   },
-  acceptButtonText: {
+  completeButtonText: {
     color: "#fff",
     fontWeight: "600",
     fontSize: 16,
